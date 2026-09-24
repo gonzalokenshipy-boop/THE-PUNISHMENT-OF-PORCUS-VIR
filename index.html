@@ -176,6 +176,7 @@ const G = {
   highScoresError: false,
   scoreSubmitPending: false,
   pendingScore: 0,
+  isNewRecord: false,
   nameEntry: { text:'', cursorBlink:0 },
   passwordEntry: { text:'', cursorBlink:0 },
   passwordError: 0,
@@ -664,7 +665,8 @@ async function checkGlobalRankingForScore(score){
     G.gameOverPhase = 'error';
     return;
   }
-  G.gameOverPhase = isHighScore(score) ? 'record' : 'normal';
+  G.isNewRecord = isHighScore(score);
+  G.gameOverPhase = isTop10Score(score) ? 'record' : 'normal';
 }
 
 function goToTitle(){ G.state = STATES.TITLE; Audio_.startMusic('title'); resetIdle(); }
@@ -685,6 +687,20 @@ function isHighScore(score){
   if(!Number.isFinite(score) || score <= 0) return false;
   if(G.highScores.length === 0) return true;
   return score > G.highScores[0].score;
+}
+
+function isTop10Score(score){
+  // Determina si el puntaje entra al Top 10 (habilita ingresar el nombre
+  // y subir el puntaje al ranking global), independientemente de si es
+  // o no el nuevo record absoluto (#1).
+  if(!G.highScoresReady) return false;
+  if(!Number.isFinite(score) || score <= 0) return false;
+  if(G.highScores.length === 0) return true;
+  if(G.highScores.length < CONFIG.MAX_HIGH_SCORES){
+    const lowest = G.highScores[G.highScores.length-1].score;
+    return score > lowest;
+  }
+  return score > G.highScores[CONFIG.MAX_HIGH_SCORES-1].score;
 }
 
 /* ============================================================
@@ -1850,9 +1866,14 @@ function renderGameOver(){
     ctx.fillText('PLEASE WAIT', CONFIG.WIDTH/2, 475);
   } else if(G.gameOverPhase==='record'){
     G.gameOverTimer += 16;
-    if(Math.floor(G.gameOverTimer/300)%2===0){
-      ctx.fillStyle='#ffee55'; ctx.font='bold 22px "Courier New", monospace';
-      ctx.fillText('★ NEW HIGH SCORE ★', CONFIG.WIDTH/2, 440);
+    if(G.isNewRecord){
+      if(Math.floor(G.gameOverTimer/300)%2===0){
+        ctx.fillStyle='#ffee55'; ctx.font='bold 22px "Courier New", monospace';
+        ctx.fillText('★ NEW HIGH SCORE ★', CONFIG.WIDTH/2, 440);
+      }
+    } else {
+      ctx.fillStyle='#80ff9c'; ctx.font='bold 20px "Courier New", monospace';
+      ctx.fillText('TOP 10 SCORE!', CONFIG.WIDTH/2, 440);
     }
     ctx.fillStyle='#fff'; ctx.font='16px "Courier New", monospace';
     ctx.fillText(isTouchDevice()?'TAP TO ENTER NAME':'PRESS ENTER', CONFIG.WIDTH/2, 500);
