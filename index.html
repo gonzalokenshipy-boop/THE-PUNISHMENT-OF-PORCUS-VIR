@@ -680,17 +680,11 @@ function confirmMenu(){
 }
 
 function isHighScore(score){
-  // Una puntuacion es record SOLO si realmente entra al Top 10 actual.
+  // Una puntuacion es record SOLO si supera el puntaje del Top 1 actual.
   if(!G.highScoresReady) return false;
   if(!Number.isFinite(score) || score <= 0) return false;
   if(G.highScores.length === 0) return true;
-  if(G.highScores.length < CONFIG.MAX_HIGH_SCORES){
-    // Con tabla parcialmente llena, debe superar la puntuacion mas baja existente.
-    const lowest = G.highScores[G.highScores.length-1].score;
-    return score > lowest;
-  }
-  // Tabla llena (10 registros): debe superar el decimo puesto.
-  return score > G.highScores[CONFIG.MAX_HIGH_SCORES-1].score;
+  return score > G.highScores[0].score;
 }
 
 /* ============================================================
