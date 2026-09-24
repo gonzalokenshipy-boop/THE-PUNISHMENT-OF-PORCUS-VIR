@@ -445,24 +445,82 @@ function handleMenuTapAt(x,y){
   }
 }
 
+/* ------------------------------------------------------------
+   Manejo unificado de toques (touchstart)
+   Cada toque se procesa UNA sola vez, con un unico listener y
+   ramas explicitas por estado. Esto evita que dos listeners
+   procesen el mismo evento y que se produzcan transiciones en
+   cascada (por ejemplo, GAME_OVER -> NAME_ENTRY -> confirmar
+   el nombre en el mismo toque).
+------------------------------------------------------------- */
+
+// Zona del boton CONFIRMAR de NAME_ENTRY y geometria de su teclado táctil
+const NAME_VKB_START_Y = 190;
+const NAME_VKB_KEY_W = 68;
+const NAME_VKB_KEY_H = 46;
+const NAME_VKB_GAP = 6;
+const NAME_CONFIRM_ZONE = { x: CONFIG.WIDTH/2-150, y:410, w:300, h:64 };
+
+// Geometria del teclado táctil y botones de PASSWORD_ENTRY
+const PW_VKB_START_Y = 260;
+const PW_VKB_KEY_W = 56;
+const PW_VKB_KEY_H = 38;
+const PW_VKB_GAP = 5;
+const PW_CANCEL_ZONE = { x: CONFIG.WIDTH/2-170, y:190, w:150, h:50 };
+const PW_CONFIRM_ZONE = { x: CONFIG.WIDTH/2+20, y:190, w:150, h:50 };
+
+function handleNameEntryTouch(p){
+  // Solo las teclas virtuales escriben el nombre, y solo el boton
+  // CONFIRMAR explicito confirma. Ningun otro toque hace nada.
+  if(G.scoreSubmitPending) return;
+  if(vkbHit(p.x, p.y, G.nameEntry, CONFIG.MAX_NAME_LEN, NAME_VKB_START_Y, NAME_VKB_KEY_W, NAME_VKB_KEY_H, NAME_VKB_GAP)) return;
+  if(pointInZone(p.x, p.y, NAME_CONFIRM_ZONE)){ confirmNameEntry(); return; }
+  // tocar fuera del teclado y del boton CONFIRMAR: no hace nada
+}
+
+function handlePasswordEntryTouch(p){
+  if(pointInZone(p.x,p.y, PW_CANCEL_ZONE)){
+    G.passwordEntry.text = ''; G.passwordError = 0;
+    G.state = STATES.OPTIONS; Audio_.SFX.navigate();
+    return;
+  }
+  if(pointInZone(p.x,p.y, PW_CONFIRM_ZONE)){ confirmPasswordEntry(); return; }
+  vkbHit(p.x,p.y, G.passwordEntry, CONFIG.MAX_PASSWORD_LEN, PW_VKB_START_Y, PW_VKB_KEY_W, PW_VKB_KEY_H, PW_VKB_GAP);
+}
+
+function handleTouchTap(t, p){
+  if(G.state === STATES.PLAYING){
+    if(pointInZone(p.x,p.y,touchZones.left)){ activeTouches.set(t.identifier,'left'); Input.left = true; }
+    else if(pointInZone(p.x,p.y,touchZones.right)){ activeTouches.set(t.identifier,'right'); Input.right = true; }
+    else if(pointInZone(p.x,p.y,touchZones.shoot)){ activeTouches.set(t.identifier,'shoot'); Input.shoot = true; Input.shootPressed = true; }
+    else if(pointInZone(p.x,p.y,pauseZone)){ onPauseKey(); }
+    return;
+  }
+  if(G.state === STATES.PAUSED){
+    if(pointInZone(p.x,p.y,resumeZone)){ onPauseKey(); }
+    return;
+  }
+  if(G.state === STATES.NAME_ENTRY){
+    handleNameEntryTouch(p);
+    return;
+  }
+  if(G.state === STATES.PASSWORD_ENTRY){
+    handlePasswordEntryTouch(p);
+    return;
+  }
+  // Estados de menu (TITLE, MENU, HIGH_SCORES, HOW_TO_PLAY, OPTIONS, GAME_OVER):
+  // responden EXCLUSIVAMENTE a los botones virtuales ▲ ▼ SELECT/OK BACK.
+  // Ningun otro toque en la pantalla navega ni selecciona nada.
+  menuNavHit(p.x,p.y);
+}
+
 canvas.addEventListener('touchstart', (e)=>{
   e.preventDefault();
   Audio_.ensure();
   resetIdle();
   for(const t of e.changedTouches){
     const p = canvasCoordsFromEvent(t);
-    let handled = false;
-    if(G.state === STATES.PLAYING){
-      if(pointInZone(p.x,p.y,touchZones.left)){ activeTouches.set(t.identifier,'left'); Input.left = true; handled=true; }
-      else if(pointInZone(p.x,p.y,touchZones.right)){ activeTouches.set(t.identifier,'right'); Input.right = true; handled=true; }
-      else if(pointInZone(p.x,p.y,touchZones.shoot)){ activeTouches.set(t.identifier,'shoot'); Input.shoot = true; Input.shootPressed = true; handled=true; }
-      else if(pointInZone(p.x,p.y,pauseZone)){ onPauseKey(); handled=true; }
-    } else if(G.state === STATES.PAUSED){
-      if(pointInZone(p.x,p.y,resumeZone)){ onPauseKey(); handled=true; }
-    }
-    if(!handled){
-      if(!menuNavHit(p.x,p.y)){ handleMenuTapAt(p.x,p.y); }
-    }
+    handleTouchTap(t, p);
   }
 }, {passive:false});
 
@@ -622,9 +680,17 @@ function confirmMenu(){
 }
 
 function isHighScore(score){
+  // Una puntuacion es record SOLO si realmente entra al Top 10 actual.
   if(!G.highScoresReady) return false;
-  if(G.highScores.length < CONFIG.MAX_HIGH_SCORES) return true;
-  return score > G.highScores[G.highScores.length-1].score;
+  if(!Number.isFinite(score) || score <= 0) return false;
+  if(G.highScores.length === 0) return true;
+  if(G.highScores.length < CONFIG.MAX_HIGH_SCORES){
+    // Con tabla parcialmente llena, debe superar la puntuacion mas baja existente.
+    const lowest = G.highScores[G.highScores.length-1].score;
+    return score > lowest;
+  }
+  // Tabla llena (10 registros): debe superar el decimo puesto.
+  return score > G.highScores[CONFIG.MAX_HIGH_SCORES-1].score;
 }
 
 /* ============================================================
@@ -1654,7 +1720,7 @@ function renderOptions(){
   }
 
   ctx.fillStyle='#ffdd55'; ctx.font='14px "Courier New", monospace';
-  ctx.fillText(isTouchDevice()?'TAP TO TOGGLE / RETURN WITH ENTER':'ARROWS: NAVIGATE  ENTER: CONFIRM/TOGGLE  ESC: BACK', CONFIG.WIDTH/2, 585);
+  ctx.fillText(isTouchDevice()?'USA LOS BOTONES ▲▼ Y SELECT/BACK':'ARROWS: NAVIGATE  ENTER: CONFIRM/TOGGLE  ESC: BACK', CONFIG.WIDTH/2, 585);
 
   if(G.optionsMessageTimer>0){
     G.optionsMessageTimer -= 16;
@@ -1670,46 +1736,54 @@ function renderPasswordEntry(){
   drawBackground(0);
   ctx.textAlign='center';
   ctx.fillStyle='#ff5555'; ctx.font='bold 26px "Courier New", monospace';
-  ctx.fillText('RESET HIGH SCORES', CONFIG.WIDTH/2, 130);
-  ctx.fillStyle='#ffdd55'; ctx.font='18px "Courier New", monospace';
-  ctx.fillText('ENTER PASSWORD', CONFIG.WIDTH/2, 168);
+  ctx.fillText('RESET HIGH SCORES', CONFIG.WIDTH/2, 60);
+  ctx.fillStyle='#ffdd55'; ctx.font='16px "Courier New", monospace';
+  ctx.fillText('ENTER PASSWORD', CONFIG.WIDTH/2, 92);
 
   G.passwordEntry.cursorBlink += 16;
   const showCursor = Math.floor(G.passwordEntry.cursorBlink/400)%2===0;
   const masked = '*'.repeat(G.passwordEntry.text.length);
-  ctx.font='bold 30px "Courier New", monospace';
+  ctx.font='bold 26px "Courier New", monospace';
   ctx.fillStyle='#fff';
-  ctx.fillText(masked.length ? masked : '________', CONFIG.WIDTH/2, 225);
+  ctx.fillText(masked.length ? masked : '________', CONFIG.WIDTH/2, 135);
   if(showCursor && masked.length){
     const w = ctx.measureText(masked).width;
     ctx.fillStyle='#ffdd55';
-    ctx.fillRect(CONFIG.WIDTH/2 + w/2 + 4, 203, 3, 26);
+    ctx.fillRect(CONFIG.WIDTH/2 + w/2 + 4, 116, 3, 24);
   }
 
   if(G.passwordError>0){
     G.passwordError -= 16;
-    ctx.fillStyle='#ff4444'; ctx.font='bold 16px "Courier New", monospace';
-    ctx.fillText('INCORRECT PASSWORD', CONFIG.WIDTH/2, 268);
+    ctx.fillStyle='#ff4444'; ctx.font='bold 14px "Courier New", monospace';
+    ctx.fillText('INCORRECT PASSWORD', CONFIG.WIDTH/2, 158);
   }
 
-  ctx.font='14px "Courier New", monospace';
+  const touch = isTouchDevice();
+  ctx.font='13px "Courier New", monospace';
   ctx.fillStyle='#ccc';
-  ctx.fillText(isTouchDevice() ? 'USA EL TECLADO EN PANTALLA' : 'ESCRIBE Y PRESIONA ENTER  |  ESC PARA CANCELAR', CONFIG.WIDTH/2, 300);
+  ctx.fillText(touch ? 'USA EL TECLADO EN PANTALLA' : 'ESCRIBE Y PRESIONA ENTER  |  ESC PARA CANCELAR', CONFIG.WIDTH/2, 172);
 
-  if(isTouchDevice()){
+  if(touch){
+    // boton CANCELAR
+    const c = PW_CANCEL_ZONE;
     ctx.fillStyle='rgba(255,80,80,0.25)';
-    ctx.fillRect(CONFIG.WIDTH/2-160, 340, 140, 38);
-    ctx.strokeStyle='#ff8080'; ctx.strokeRect(CONFIG.WIDTH/2-160,340,140,38);
-    ctx.fillStyle='#fff'; ctx.font='bold 15px "Courier New", monospace';
-    ctx.fillText('CANCELAR', CONFIG.WIDTH/2-90, 364);
+    ctx.fillRect(c.x,c.y,c.w,c.h);
+    ctx.strokeStyle='#ff8080'; ctx.lineWidth=2; ctx.strokeRect(c.x,c.y,c.w,c.h);
+    ctx.fillStyle='#fff'; ctx.font='bold 16px "Courier New", monospace';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('CANCELAR', c.x+c.w/2, c.y+c.h/2+1);
 
+    // boton CONFIRMAR
+    const k = PW_CONFIRM_ZONE;
     ctx.fillStyle='rgba(80,255,120,0.25)';
-    ctx.fillRect(CONFIG.WIDTH/2+20, 340, 140, 38);
-    ctx.strokeStyle='#80ff9c'; ctx.strokeRect(CONFIG.WIDTH/2+20,340,140,38);
+    ctx.fillRect(k.x,k.y,k.w,k.h);
+    ctx.strokeStyle='#80ff9c'; ctx.strokeRect(k.x,k.y,k.w,k.h);
     ctx.fillStyle='#fff';
-    ctx.fillText('CONFIRMAR', CONFIG.WIDTH/2+90, 364);
+    ctx.fillText('CONFIRMAR', k.x+k.w/2, k.y+k.h/2+1);
+    ctx.textBaseline='alphabetic';
+    ctx.textAlign='center';
 
-    drawVirtualKeyboard();
+    drawVirtualKeyboard(PW_VKB_START_Y, PW_VKB_KEY_W, PW_VKB_KEY_H, PW_VKB_GAP);
   }
 }
 
@@ -1802,52 +1876,69 @@ function renderGameOver(){
 function renderNameEntry(){
   drawBackground(0);
   ctx.textAlign='center';
-  ctx.fillStyle='#ffdd55'; ctx.font='bold 30px "Courier New", monospace';
-  ctx.fillText('ENTER YOUR NAME', CONFIG.WIDTH/2, 220);
+  const touch = isTouchDevice();
+
+  const titleY = touch ? 55 : 220;
+  ctx.fillStyle='#ffdd55'; ctx.font= touch ? 'bold 24px "Courier New", monospace' : 'bold 30px "Courier New", monospace';
+  ctx.fillText('ENTER YOUR NAME', CONFIG.WIDTH/2, titleY);
 
   G.nameEntry.cursorBlink += 16;
   const showCursor = Math.floor(G.nameEntry.cursorBlink/400)%2===0;
   const display = G.nameEntry.text.padEnd(CONFIG.MAX_NAME_LEN,'_');
-  ctx.font='bold 40px "Courier New", monospace';
+  const nameY = touch ? 105 : 300;
+  ctx.font= touch ? 'bold 32px "Courier New", monospace' : 'bold 40px "Courier New", monospace';
   ctx.fillStyle='#fff';
-  let text = G.nameEntry.text;
-  ctx.fillText(display, CONFIG.WIDTH/2, 300);
-  // simple caret
-  const caretX = CONFIG.WIDTH/2 - (CONFIG.MAX_NAME_LEN*24)/2 + text.length*24 + 12;
-  if(showCursor){
-    ctx.fillStyle='#ffdd55';
-    ctx.fillRect(caretX, 275, 3, 30);
+  ctx.fillText(display, CONFIG.WIDTH/2, nameY);
+  if(!touch){
+    const text = G.nameEntry.text;
+    const caretX = CONFIG.WIDTH/2 - (CONFIG.MAX_NAME_LEN*24)/2 + text.length*24 + 12;
+    if(showCursor){
+      ctx.fillStyle='#ffdd55';
+      ctx.fillRect(caretX, 275, 3, 30);
+    }
   }
 
-  ctx.font='16px "Courier New", monospace';
-  ctx.fillStyle='#ccc';
+  ctx.font= touch ? '13px "Courier New", monospace' : '16px "Courier New", monospace';
+  const msgY = touch ? 135 : 380;
   if(G.scoreSubmitPending){
     ctx.fillStyle='#ffdd55';
-    ctx.fillText('SAVING GLOBAL SCORE...', CONFIG.WIDTH/2, 380);
+    ctx.fillText('SAVING GLOBAL SCORE...', CONFIG.WIDTH/2, msgY);
   } else {
     ctx.fillStyle='#ccc';
-    ctx.fillText('USA EL TECLADO. ENTER PARA CONFIRMAR.', CONFIG.WIDTH/2, 380);
+    ctx.fillText(touch ? 'USA EL TECLADO EN PANTALLA' : 'USA EL TECLADO. ENTER PARA CONFIRMAR.', CONFIG.WIDTH/2, msgY);
   }
 
-  if(isTouchDevice()){
-    drawVirtualKeyboard();
+  if(touch){
+    drawVirtualKeyboard(NAME_VKB_START_Y, NAME_VKB_KEY_W, NAME_VKB_KEY_H, NAME_VKB_GAP);
+
+    // boton CONFIRMAR grande y explicito: unica forma de confirmar el nombre por tactil
+    const z = NAME_CONFIRM_ZONE;
+    const disabled = G.scoreSubmitPending;
+    ctx.fillStyle = disabled ? 'rgba(120,120,120,0.35)' : 'rgba(80,255,120,0.28)';
+    ctx.fillRect(z.x,z.y,z.w,z.h);
+    ctx.strokeStyle = disabled ? 'rgba(200,200,200,0.5)' : '#80ff9c';
+    ctx.lineWidth=3; ctx.strokeRect(z.x,z.y,z.w,z.h);
+    ctx.fillStyle='#fff'; ctx.font='bold 24px "Courier New", monospace';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('CONFIRMAR', z.x+z.w/2, z.y+z.h/2+2);
+    ctx.textBaseline='alphabetic';
   }
 }
 
 const VKB_ROWS = ['ABCDEFGHIJ','KLMNOPQRST','UVWXYZ0123','456789 <-<'];
-function drawVirtualKeyboard(){
-  const startY = 410;
-  const keyW = 60, keyH = 34, gap=4;
+function drawVirtualKeyboard(startY, keyW, keyH, gap){
+  startY = startY!==undefined ? startY : 410;
+  keyW = keyW || 60; keyH = keyH || 34; gap = gap!==undefined ? gap : 4;
   VKB_ROWS.forEach((row,ri)=>{
     const chars = row.split('');
     const rowWidth = chars.length*(keyW+gap)-gap;
     const startX = CONFIG.WIDTH/2 - rowWidth/2;
     chars.forEach((ch,ci)=>{
       const x = startX+ci*(keyW+gap), y = startY+ri*(keyH+gap);
-      ctx.fillStyle='rgba(255,255,255,0.1)';
+      ctx.fillStyle='rgba(255,255,255,0.12)';
       ctx.fillRect(x,y,keyW,keyH);
-      ctx.strokeStyle='rgba(255,255,255,0.3)'; ctx.strokeRect(x,y,keyW,keyH);
-      ctx.fillStyle='#fff'; ctx.font='16px "Courier New", monospace';
+      ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=2; ctx.strokeRect(x,y,keyW,keyH);
+      ctx.fillStyle='#fff'; ctx.font='bold '+Math.max(12,Math.round(keyH*0.42))+'px "Courier New", monospace';
       ctx.textAlign='center'; ctx.textBaseline='middle';
       let label = ch;
       if(row[ci]==='<' && ci===chars.length-1) label='DEL';
@@ -1857,9 +1948,9 @@ function drawVirtualKeyboard(){
   });
   ctx.textBaseline='alphabetic';
 }
-function vkbHit(x,y, target, maxLen){
-  const startY = 410;
-  const keyW = 60, keyH = 34, gap=4;
+function vkbHit(x,y, target, maxLen, startY, keyW, keyH, gap){
+  startY = startY!==undefined ? startY : 410;
+  keyW = keyW || 60; keyH = keyH || 34; gap = gap!==undefined ? gap : 4;
   for(let ri=0; ri<VKB_ROWS.length; ri++){
     const chars = VKB_ROWS[ri].split('');
     const rowWidth = chars.length*(keyW+gap)-gap;
@@ -2036,41 +2127,6 @@ function handleOptionsConfirm(){
     G.optionsMessageTimer = 1800;
   }
 }
-
-// touch handling for options / gameover / name entry / password taps
-canvas.addEventListener('touchstart', (e)=>{
-  if(![STATES.OPTIONS, STATES.GAME_OVER, STATES.NAME_ENTRY, STATES.PASSWORD_ENTRY].includes(G.state)) return;
-  const t = e.changedTouches[0];
-  const p = canvasCoordsFromEvent(t);
-  if(menuNavHit(p.x,p.y)) return;
-  if(G.state===STATES.OPTIONS){
-    if(G.optionsConfirm){
-      if(p.y>=320 && p.y<=346){ G.optionsConfirmIndex=0; handleOptionsConfirm(); }
-      else if(p.y>=356 && p.y<=382){ G.optionsConfirmIndex=1; handleOptionsConfirm(); }
-    } else {
-      for(let i=0;i<OPTIONS_ITEMS.length;i++){
-        const y = 160+i*60;
-        if(p.y>y-24 && p.y<y+12){ G.optionsIndex=i; handleOptionsConfirm(); return; }
-      }
-    }
-  } else if(G.state===STATES.GAME_OVER){
-    advanceGameOver();
-  } else if(G.state===STATES.NAME_ENTRY){
-    if(isTouchDevice()){
-      if(!vkbHit(p.x,p.y, G.nameEntry, CONFIG.MAX_NAME_LEN)){
-        if(p.y<400){ confirmNameEntry(); }
-      }
-    }
-  } else if(G.state===STATES.PASSWORD_ENTRY){
-    if(isTouchDevice()){
-      if(p.y>=340 && p.y<=378){
-        if(p.x>=CONFIG.WIDTH/2-160 && p.x<=CONFIG.WIDTH/2-20){ G.state=STATES.OPTIONS; Audio_.SFX.navigate(); return; }
-        if(p.x>=CONFIG.WIDTH/2+20 && p.x<=CONFIG.WIDTH/2+160){ confirmPasswordEntry(); return; }
-      }
-      vkbHit(p.x,p.y, G.passwordEntry, CONFIG.MAX_PASSWORD_LEN);
-    }
-  }
-}, {passive:true});
 
 function update(dt){
   if(axisCooldown>0) axisCooldown -= dt;
