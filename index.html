@@ -690,16 +690,12 @@ function isHighScore(score){
 }
 
 function isTop10Score(score){
-  // Determina si el puntaje entra al Top 10 (habilita ingresar el nombre
-  // y subir el puntaje al ranking global), independientemente de si es
-  // o no el nuevo record absoluto (#1).
   if(!G.highScoresReady) return false;
   if(!Number.isFinite(score) || score <= 0) return false;
-  if(G.highScores.length === 0) return true;
-  if(G.highScores.length < CONFIG.MAX_HIGH_SCORES){
-    const lowest = G.highScores[G.highScores.length-1].score;
-    return score > lowest;
-  }
+  // Si hay menos de 10 registros, siempre hay lugar: entra sin necesidad
+  // de superar a nadie.
+  if(G.highScores.length < CONFIG.MAX_HIGH_SCORES) return true;
+  // Tabla llena (10 registros): debe superar el decimo puesto.
   return score > G.highScores[CONFIG.MAX_HIGH_SCORES-1].score;
 }
 
